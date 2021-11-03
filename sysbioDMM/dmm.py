@@ -1,10 +1,10 @@
 ## Core function to model DMM
 ## code adapted from https://pyro.ai/examples/dmm.html
 
+import torch
 from torch import nn, tensor
 
-from pyro.optim import ClippedAdam
-from pyro.infer import SVI, Trace_ELBO
+import pyro
 import pyro.distributions as dist
 import pyro.poutine as poutine
 from sysbioDMM import Combiner, GatedTransition, Emitter
@@ -16,7 +16,7 @@ class DMM(nn.Module):
     """
 
     def __init__(self, input_dim, z_dim=25, emission_dim=25,
-                 transition_dim=50, rnn_dim=150, rnn_dropout_rate=0.0,
+                 transition_dim=50, rnn_dim=150, rnn_dropout_rate=0.0, rnn_layers=1,
                  num_iafs=0, iaf_dim=50, use_cuda=True):
         super().__init__()
 
@@ -26,7 +26,8 @@ class DMM(nn.Module):
         self.combiner = Combiner(z_dim, rnn_dim)
         self.rnn = nn.RNN(input_size=input_dim, hidden_size=rnn_dim,
                           nonlinearity='relu', batch_first=True,
-                          bidirectional=False, num_layers=1, dropout=rnn_dropout_rate)
+                          bidirectional=False, num_layers=rnn_layers,
+                          dropout=rnn_dropout_rate)
 
         # define a (trainable) parameters z_0 and z_q_0 that help define
         # the probability distributions p(z_1) and q(z_1)
@@ -80,16 +81,18 @@ class DMM(nn.Module):
                                       .mask(mini_batch_mask[:, t - 1:t])
                                       .to_event(1))
 
-                # compute the probabilities that parameterize the bernoulli likelihood
-                emission_probs_mean, emission_probs_scale = self.emitter(z_t)
+                # Computer the parameters of the diagonal gaussian distribution p(x_t| z_t)
+                # emission_probs_mean, emission_probs_scale = self.emitter(z_t)
+                lambda_p = self.emitter(z_t)
+                print(lambda_p)
                 # the next statement instructs pyro to observe x_t according to the
-                # bernoulli distribution p(x_t|z_t)
+                # multivariate normal distribution p(x_t|z_t)
                 pyro.sample("obs_x_%d" % t,
-                            # dist.Bernoulli(emission_probs_t)
-                            dist.Normal(emission_probs_mean, emission_probs_scale)
+                            dist.Poisson(lambda_p)
                             .mask(mini_batch_mask[:, t - 1:t])
                             .to_event(1),
                             obs=mini_batch[:, t - 1, :])
+
                 # the latent sampled at this time step will be conditioned upon
                 # in the next time step so keep track of it
                 z_prev = z_t

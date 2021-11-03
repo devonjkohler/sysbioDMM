@@ -22,8 +22,8 @@ class Emitter(nn.Module):
         self.softplus = nn.Softplus() ## To ensure positive output
 
         ## NOTE: These might be useful depending on how we sample p(x_t|z_t)
-        # self.sigmoid = nn.Sigmoid()
-        # self.linear = nn.Linear(input_dim, input_dim)
+        self.sigmoid = nn.Sigmoid()
+        self.linear = nn.Linear(input_dim, input_dim)
 
     def forward(self, z_t):
         """
@@ -31,22 +31,33 @@ class Emitter(nn.Module):
         means `loc_p` and variance `scale_p` that parameterizes the normal distribution p(x_t|z_t)
         """
 
-        # compute the gating function
-        _gate = self.relu(self.lin_z_to_hidden(z_t))
-        gate = self.sigmoid(self.lin_hidden_to_input(_gate))
+        # # compute the gating function
+        # _gate = self.relu(self.lin_z_to_hidden(z_t))
+        # gate = self.sigmoid(self.lin_hidden_to_input(_gate))
+        #
+        # # compute the 'proposed mean'
+        # _proposed_mean = self.relu(self.lin_z_to_hidden(z_t))
+        # proposed_mean = self.lin_hidden_to_input(_proposed_mean)
+        # # assemble the actual mean used to sample z_t, which mixes
+        # # a linear transformation of z_{t-1} with the proposed mean
+        # # modulated by the gating function
+        # loc_p = (1 - gate) * self.lin_hidden_to_input(z_t) + gate * proposed_mean
+        # # compute the scale used to sample z_t, using the proposed
+        # # mean from above as input. the softplus ensures that scale is positive
+        # scale_p = self.softplus(self.linear(self.relu(proposed_mean)))
 
-        # compute the 'proposed mean'
-        _proposed_mean = self.relu(self.lin_z_to_hidden(z_t))
-        proposed_mean = self.lin_hidden_to_input(_proposed_mean)
-        # assemble the actual mean used to sample z_t, which mixes
-        # a linear transformation of z_{t-1} with the proposed mean
-        # modulated by the gating function
-        loc_p = (1 - gate) * self.lin_hidden_to_input(z_t) + gate * proposed_mean
-        # compute the scale used to sample z_t, using the proposed
-        # mean from above as input. the softplus ensures that scale is positive
-        scale_p = self.softplus(self.linear(self.relu(proposed_mean)))
+        # loc_ = self.relu(self.lin_z_to_hidden(z_t))
+        # loc_ = self.relu(self.lin_hidden_to_hidden(loc_))
+        #
+        # loc_p = self.lin_hidden_to_input(loc_)
+        # # use the combined hidden state to compute the scale used to sample z_t
+        # scale_p = self.softplus(self.linear(self.relu(loc_p)))
 
-        return loc_p, scale_p
+        h1 = self.relu(self.lin_z_to_hidden(z_t))
+        h2 = self.relu(self.lin_hidden_to_hidden(h1))
+        ps = self.softplus(self.lin_hidden_to_input(h2))
+        return ps
+
 
 class GatedTransition(nn.Module):
     """
@@ -56,8 +67,11 @@ class GatedTransition(nn.Module):
         super().__init__()
         # initialize the six linear transformations used in the neural network
         self.lin_gate_z_to_hidden = nn.Linear(z_dim, transition_dim)
+        self.lin_gate_hidden_to_hidden = nn.Linear(transition_dim, transition_dim)
         self.lin_gate_hidden_to_z = nn.Linear(transition_dim, z_dim)
+
         self.lin_proposed_mean_z_to_hidden = nn.Linear(z_dim, transition_dim)
+        self.lin_proposed_mean_hidden_to_hidden = nn.Linear(transition_dim, transition_dim)
         self.lin_proposed_mean_hidden_to_z = nn.Linear(transition_dim, z_dim)
         self.lin_sig = nn.Linear(z_dim, z_dim)
         self.lin_z_to_loc = nn.Linear(z_dim, z_dim)
@@ -80,9 +94,12 @@ class GatedTransition(nn.Module):
         """
         # compute the gating function
         _gate = self.relu(self.lin_gate_z_to_hidden(z_t_1))
+        _gate = self.relu(self.lin_gate_hidden_to_hidden(_gate))
         gate = self.sigmoid(self.lin_gate_hidden_to_z(_gate))
+
         # compute the 'proposed mean'
         _proposed_mean = self.relu(self.lin_proposed_mean_z_to_hidden(z_t_1))
+        _proposed_mean = self.relu(self.lin_proposed_mean_hidden_to_hidden(_proposed_mean))
         proposed_mean = self.lin_proposed_mean_hidden_to_z(_proposed_mean)
         # assemble the actual mean used to sample z_t, which mixes
         # a linear transformation of z_{t-1} with the proposed mean
@@ -92,7 +109,7 @@ class GatedTransition(nn.Module):
         # mean from above as input. the softplus ensures that scale is positive
         scale = self.softplus(self.lin_sig(self.relu(proposed_mean)))
         # return loc, scale which can be fed into Normal
-        return loc, scaleb
+        return loc, scale
 
 class Combiner(nn.Module):
     """
